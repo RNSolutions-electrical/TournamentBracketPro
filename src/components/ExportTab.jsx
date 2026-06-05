@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Avatar } from './Avatar'
-import { getRoundName } from '../lib/game'
+import { getDefaultRoundName } from '../lib/game'
+const getRoundName = (ri, total) => getDefaultRoundName(ri, total, 'winners')
 
 export function ExportTab({ matches, players, tournament }) {
   const [exporting, setExporting] = useState(false)
