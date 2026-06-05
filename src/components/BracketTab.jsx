@@ -68,7 +68,7 @@ function SlotPicker({ label, currentSlot, players, usedPlayerIds, allMatches, cu
     !q || p.name.toLowerCase().includes(q.toLowerCase()) || (p.nickname||'').toLowerCase().includes(q.toLowerCase())
   )
   // Exclude the current match itself from winner_of options
-  const filteredMatches = allMatches.filter(m => m.id !== currentMatchId && (!q || m.label.toLowerCase().includes(q.toLowerCase())))
+  const filteredMatches = allMatches.filter(m => !q || m.label.toLowerCase().includes(q.toLowerCase()))
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.82)', zIndex:3000, display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(4px)' }}
@@ -83,11 +83,16 @@ function SlotPicker({ label, currentSlot, players, usedPlayerIds, allMatches, cu
         {/* Tabs */}
         <div style={{ display:'flex', gap:6 }}>
           <button onClick={()=>{setTab('player');setQ('')}} style={S.segBtn(tab==='player')}>👤 Player</button>
-          <button onClick={()=>{setTab('winner');setQ('')}} style={S.segBtn(tab==='winner')}>🏆 Winner Of</button>
+          <button onClick={()=>{setTab('winner');setQ('')}} style={S.segBtn(tab==='winner')}>🔗 Winner Of…</button>
         </div>
+        {tab==='winner' && (
+          <p style={{color:'#10b981',fontSize:10,fontFamily:'Cinzel',letterSpacing:1,margin:0}}>
+            Select a match — this slot fills with whoever wins it
+          </p>
+        )}
 
         <input autoFocus value={q} onChange={e=>setQ(e.target.value)}
-          placeholder={tab==='player' ? 'Search player…' : 'Search match…'}
+          placeholder={tab==='player' ? 'Search player…' : `Search ${allMatches.length} available match${allMatches.length!==1?'es':''}…`}
           style={{ padding:'8px 12px', borderRadius:8, border:'1px solid var(--border-bright)', background:'var(--charcoal-3)', color:'var(--cream)', fontSize:13, outline:'none', fontFamily:'Oswald' }} />
 
         <div style={{ overflowY:'auto', display:'flex', flexDirection:'column', gap:5, flex:1 }}>
@@ -128,9 +133,16 @@ function SlotPicker({ label, currentSlot, players, usedPlayerIds, allMatches, cu
           })}
 
           {tab==='winner' && filteredMatches.length===0 && (
-            <p style={{color:'var(--cream-dim)',fontSize:12,textAlign:'center',padding:8,fontFamily:'IM Fell English',fontStyle:'italic'}}>
-              {allMatches.length<=1 ? 'Add more matches to link from' : 'No matches found'}
-            </p>
+            <div style={{padding:'12px 8px',textAlign:'center'}}>
+              <p style={{color:'var(--cream-dim)',fontSize:13,fontFamily:'IM Fell English',fontStyle:'italic',marginBottom:8}}>
+                {allMatches.length===0 ? 'No other matches exist yet.' : 'No matches match your search.'}
+              </p>
+              {allMatches.length===0 && (
+                <p style={{color:'var(--charcoal-4)',fontSize:11}}>
+                  Build your other matches first (e.g. Pre-Round), then come back and link this slot to the winner.
+                </p>
+              )}
+            </div>
           )}
         </div>
 
