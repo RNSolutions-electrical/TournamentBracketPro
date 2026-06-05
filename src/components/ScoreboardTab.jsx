@@ -25,27 +25,27 @@ function WasherInput({ label, value, onChange, max = 4, color }) {
 
 // Resolve a human-readable name for a match from the bracket structure
 function resolveMatchName(match, bracket) {
-  if (!bracket) return `Match`
+  if (!bracket) return 'Match'
   const section = match.bracket_section || 'winners'
   const sri = match.section_round_index ?? match.round_index ?? 0
-  const structure = bracket
 
-  if (structure.type === 'single') {
-    const totalRounds = structure.rounds?.length || 1
-    const customName = structure.rounds?.[sri]?.name
-    return customName || getDefaultRoundName(sri, totalRounds, 'winners')
+  if (section === 'consolation') {
+    const total = bracket.consolation?.length || 1
+    return bracket.consolation?.[sri]?.name || `Consolation Round ${sri + 1}`
+  }
+  if (!bracket.type || bracket.type === 'single') {
+    const totalRounds = bracket.rounds?.length || 1
+    return bracket.rounds?.[sri]?.name || getDefaultRoundName(sri, totalRounds, 'winners')
   }
   if (section === 'winners') {
-    const totalRounds = structure.winners?.length || 1
-    const customName = structure.winners?.[sri]?.name
-    return (customName || getDefaultRoundName(sri, totalRounds, 'winners'))
+    const totalRounds = bracket.winners?.length || 1
+    return bracket.winners?.[sri]?.name || getDefaultRoundName(sri, totalRounds, 'winners')
   }
   if (section === 'losers') {
-    const totalRounds = structure.losers?.length || 1
-    const customName = structure.losers?.[sri]?.name
-    return (customName || getDefaultRoundName(sri, totalRounds, 'losers'))
+    const totalRounds = bracket.losers?.length || 1
+    return bracket.losers?.[sri]?.name || getDefaultRoundName(sri, totalRounds, 'losers')
   }
-  return structure.grandFinal?.name || 'Grand Final'
+  return bracket.grandFinal?.name || 'Grand Final'
 }
 
 // Advance winner to next match in the bracket
@@ -182,6 +182,7 @@ export function ScoreboardTab({ matches, players, tournament, isCommissioner, ac
   const matchLabel = resolveMatchName(selectedMatch, bracket)
   const sectionBadge = selectedMatch.bracket_section === 'losers' ? '🔴 Losers Bracket'
     : selectedMatch.bracket_section === 'grand_final' ? '🏆 Grand Final'
+    : selectedMatch.bracket_section === 'consolation' ? '🟣 Consolation Bracket'
     : '🟡 Winners Bracket'
 
   return (

@@ -91,6 +91,37 @@ export function PlayersTab({ players, isCommissioner }) {
         </div>
       )}
 
+      {/* Quick-add Season 6 roster */}
+      {isCommissioner && players.length === 0 && (
+        <div style={{ background:'var(--charcoal-2)', borderRadius:12, padding:14, marginBottom:16, border:'1px solid var(--border)' }}>
+          <p style={{ fontFamily:'Cinzel', color:'var(--gold)', fontSize:10, letterSpacing:3, textTransform:'uppercase', marginBottom:10 }}>Quick Add — Season 6 Roster</p>
+          <p style={{ color:'var(--cream-dim)', fontSize:12, marginBottom:12, fontFamily:'IM Fell English', fontStyle:'italic' }}>
+            Load the roster from the cardboard bracket — you can edit names after adding.
+          </p>
+          <button onClick={async () => {
+            const roster = [
+              { name:'Sweet Gum', nickname:'Sweet Gum' },
+              { name:'Washer Box', nickname:'Washer Box' },
+              { name:'Ferri', nickname:'Ferri' },
+              { name:'Slow Roll', nickname:'Slow Roll' },
+              { name:'Gump', nickname:'Gump' },
+              { name:'KP', nickname:'KP' },
+              { name:'Bubbles', nickname:'Bubbles' },
+              { name:'Woodchuck', nickname:'Woodchuck' },
+              { name:'Butthole Proof', nickname:'Butthole Proof' },
+            ]
+            for (let i = 0; i < roster.length; i++) {
+              await supabase.from('players').insert({ name: roster[i].name, nickname: roster[i].nickname, color: COLORS[i % COLORS.length] })
+            }
+          }}
+            style={{ width:'100%', padding:'10px 0', borderRadius:9, border:'1px solid var(--gold)',
+              background:'var(--gold)', color:'var(--charcoal)', fontFamily:'Cinzel', fontWeight:700,
+              fontSize:12, letterSpacing:2, cursor:'pointer', textTransform:'uppercase' }}>
+            🃏 Load Season 6 Roster
+          </button>
+        </div>
+      )}
+
       {/* Player list */}
       <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
         {players.map((p, i) => (

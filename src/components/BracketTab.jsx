@@ -560,6 +560,117 @@ function BracketViewer({ structure, matches, players, isCommissioner, onReset, s
     await supabase.from('tournament').update({ bracket: updated, updated_at: new Date().toISOString() }).eq('id','season6')
   }
 
+  // ── Round / Match management ──────────────────────────────────────────────
+  const mutateBracket = async (updater) => {
+    const { data } = await supabase.from('tournament').select('bracket').eq('id','season6').single()
+    if (!data?.bracket) return
+    const updated = updater(JSON.parse(JSON.stringify(data.bracket)))
+    await supabase.from('tournament').update({ bracket: updated, updated_at: new Date().toISOString() }).eq('id','season6')
+  }
+
+  const addRound = async (section, name = '') => {
+    await mutateBracket(b => {
+      const newRound = { matches: [{ id: Math.random().toString(36).slice(2,9), p1: null, p2: null, isBye: false, score1: 0, score2: 0, winner: null }], name: name || null, type: section }
+      if (section === 'winners') {
+        if (b.rounds) b.rounds = [...b.rounds, newRound]
+        else if (b.winners) b.winners = [...b.winners, newRound]
+      } else if (section === 'losers') {
+        b.losers = [...(b.losers ?? []), newRound]
+      } else if (section === 'consolation') {
+        b.consolation = [...(b.consolation ?? []), newRound]
+      }
+      return b
+    })
+    // Insert a DB match row for the new round
+    const sectionArr = section === 'winners'
+      ? (structure.rounds ?? structure.winners ?? [])
+      : section === 'losers' ? (structure.losers ?? [])
+      : (structure.consolation ?? [])
+    const newRi = sectionArr.length  // index of the new round
+    await supabase.from('matches').insert({
+      round_index: newRi, match_index: 0,
+      bracket_section: section === 'consolation' ? 'consolation' : section,
+      section_round_index: newRi,
+      player1_id: null, player2_id: null,
+      rounds: [], total_net1: 0, total_net2: 0, status: 'pending',
+    })
+  }
+
+  const addMatch = async (section, sectionIndex) => {
+    await mutateBracket(b => {
+      const getRounds = () => {
+        if (section === 'winners') return b.rounds ?? b.winners ?? []
+        if (section === 'losers') return b.losers ?? []
+        return b.consolation ?? []
+      }
+      const setRounds = (arr) => {
+        if (section === 'winners') { if (b.rounds) b.rounds = arr; else b.winners = arr }
+        else if (section === 'losers') b.losers = arr
+        else b.consolation = arr
+      }
+      const rounds = getRounds()
+      const newMatch = { id: Math.random().toString(36).slice(2,9), p1: null, p2: null, isBye: false, score1: 0, score2: 0, winner: null }
+      setRounds(rounds.map((r, ri) => ri === sectionIndex ? { ...r, matches: [...(r.matches ?? []), newMatch] } : r))
+      return b
+    })
+    const roundMatches = (section === 'winners'
+      ? (structure.rounds ?? structure.winners ?? [])
+      : section === 'losers' ? (structure.losers ?? [])
+      : (structure.consolation ?? []))[sectionIndex]?.matches ?? []
+    await supabase.from('matches').insert({
+      round_index: sectionIndex, match_index: roundMatches.length,
+      bracket_section: section === 'consolation' ? 'consolation' : section,
+      section_round_index: sectionIndex,
+      player1_id: null, player2_id: null,
+      rounds: [], total_net1: 0, total_net2: 0, status: 'pending',
+    })
+  }
+
+  const deleteMatch = async (section, sectionIndex, matchIndex) => {
+    if (!window.confirm('Remove this match?')) return
+    // Remove from bracket JSON
+    await mutateBracket(b => {
+      const getRounds = () => section === 'winners' ? (b.rounds ?? b.winners ?? []) : section === 'losers' ? (b.losers ?? []) : (b.consolation ?? [])
+      const setRounds = (arr) => { if (section === 'winners') { if (b.rounds) b.rounds = arr; else b.winners = arr } else if (section === 'losers') b.losers = arr; else b.consolation = arr }
+      setRounds(getRounds().map((r, ri) => ri === sectionIndex ? { ...r, matches: (r.matches ?? []).filter((_, mi) => mi !== matchIndex) } : r))
+      return b
+    })
+    // Find and delete the DB row
+    const dbMatch = getDbMatch(section, sectionIndex, matchIndex)
+    if (dbMatch) await supabase.from('matches').delete().eq('id', dbMatch.id)
+  }
+
+  const deleteRound = async (section, sectionIndex) => {
+    if (!window.confirm(`Remove this entire round? All matches in it will be deleted.`)) return
+    await mutateBracket(b => {
+      const getRounds = () => section === 'winners' ? (b.rounds ?? b.winners ?? []) : section === 'losers' ? (b.losers ?? []) : (b.consolation ?? [])
+      const setRounds = (arr) => { if (section === 'winners') { if (b.rounds) b.rounds = arr; else b.winners = arr } else if (section === 'losers') b.losers = arr; else b.consolation = arr }
+      setRounds(getRounds().filter((_, ri) => ri !== sectionIndex))
+      return b
+    })
+    // Delete all DB match rows for this round
+    const roundMatches = matches.filter(m =>
+      (m.bracket_section === section || (!m.bracket_section && section === 'winners')) &&
+      (m.section_round_index ?? m.round_index) === sectionIndex
+    )
+    await Promise.all(roundMatches.map(m => supabase.from('matches').delete().eq('id', m.id)))
+  }
+
+  const addConsolationBracket = async () => {
+    await mutateBracket(b => {
+      b.consolation = [{ matches: [{ id: Math.random().toString(36).slice(2,9), p1: null, p2: null, isBye: false, score1: 0, score2: 0, winner: null }], name: '3rd Place Match', type: 'consolation' }]
+      return b
+    })
+    await supabase.from('matches').insert({
+      round_index: 0, match_index: 0,
+      bracket_section: 'consolation', section_round_index: 0,
+      player1_id: null, player2_id: null,
+      rounds: [], total_net1: 0, total_net2: 0, status: 'pending',
+    })
+  }
+
+  // Assign a player to a live match slot
+
   // Assign a player to a live match slot
   const assignLiveSlot = async (player) => {
     if (!pickerTarget) return
@@ -652,21 +763,45 @@ function BracketViewer({ structure, matches, players, isCommissioner, onReset, s
     if (!round) return null
     const safeMatches = round.matches ?? []
     const totalInSection = section === 'winners' ? (rounds || winners || []).length
-      : section === 'losers' ? (losers || []).length : 1
-    const displayName = round.name || (section === 'grand_final' ? 'Grand Final' : getDefaultRoundName(ri, totalInSection, section))
+      : section === 'losers' ? (losers || []).length
+      : section === 'consolation' ? (structure.consolation ?? []).length : 1
+    const displayName = round.name || (section === 'grand_final' ? 'Grand Final' : section === 'consolation' ? '3rd Place' : getDefaultRoundName(ri, totalInSection, section))
     return (
       <div key={`${section}-${ri}`} style={{ flex:1, minWidth:168, display:'flex', flexDirection:'column' }}>
-        <RoundHeader name={displayName} section={section} isCommissioner={isCommissioner} onRename={name => renameRound(section, ri, name)} />
-        <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'space-around', padding:'10px 5px', borderRight:'1px solid var(--border)' }}>
+        <RoundHeader
+          name={displayName} section={section} isCommissioner={isCommissioner}
+          onRename={name => renameRound(section, ri, name)}
+          onDelete={isCommissioner && section !== 'grand_final' ? () => deleteRound(section, ri) : null} />
+        <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'flex-start', padding:'10px 5px', borderRight:'1px solid var(--border)', gap:4 }}>
           {safeMatches.map((bm, mi) => (
-            <MatchCard key={bm?.id || mi}
-              bracketMatch={bm ?? {}}
-              dbMatch={getDbMatch(section, ri, mi)}
-              players={players}
-              isCommissioner={isCommissioner}
-              onClickScore={openMatch}
-              onAssignSlot={(dbMatch, field, current) => setPickerTarget({ matchId: dbMatch.id, field, current })} />
+            <div key={bm?.id || mi} style={{ position:'relative' }}>
+              <MatchCard
+                bracketMatch={bm ?? {}}
+                dbMatch={getDbMatch(section, ri, mi)}
+                players={players}
+                isCommissioner={isCommissioner}
+                onClickScore={openMatch}
+                onAssignSlot={(dbMatch, field, current) => setPickerTarget({ matchId: dbMatch.id, field, current })} />
+              {isCommissioner && (
+                <button onClick={() => deleteMatch(section, ri, mi)}
+                  title="Remove match"
+                  style={{ position:'absolute', top:2, right:2, background:'none', border:'none',
+                    color:'var(--red-accent)', cursor:'pointer', fontSize:11, opacity:0.4, lineHeight:1,
+                    padding:'1px 3px' }}
+                  onMouseEnter={e => e.currentTarget.style.opacity='1'}
+                  onMouseLeave={e => e.currentTarget.style.opacity='0.4'}>×</button>
+              )}
+            </div>
           ))}
+          {isCommissioner && (
+            <button onClick={() => addMatch(section, ri)}
+              style={{ margin:'4px 4px 0', padding:'5px 0', borderRadius:7,
+                border:'1px dashed var(--border)', background:'transparent',
+                color:'var(--gold-dark)', fontFamily:'Cinzel', fontSize:9,
+                letterSpacing:2, cursor:'pointer', textTransform:'uppercase' }}>
+              + Match
+            </button>
+          )}
         </div>
       </div>
     )
@@ -681,9 +816,21 @@ function BracketViewer({ structure, matches, players, isCommissioner, onReset, s
         <p style={{ fontFamily:'Cinzel', color:'var(--gold)', fontSize:10, letterSpacing:4, textTransform:'uppercase', margin:0 }}>
           Season 6 · {isSingle ? 'Single' : 'Double'} Elimination
         </p>
-        <div style={{ display:'flex', gap:8 }}>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
           {isCommissioner && (
-            <button onClick={onReset} style={{ padding:'5px 12px', borderRadius:7, border:'1px solid var(--red-accent)', background:'none', color:'var(--red-accent)', cursor:'pointer', fontSize:11, fontFamily:'Cinzel' }}>Reset</button>
+            <>
+              <button onClick={() => addRound('winners', '')}
+                style={{ padding:'5px 10px', borderRadius:7, border:'1px solid var(--gold-dark)', background:'transparent', color:'var(--gold-dark)', cursor:'pointer', fontSize:10, fontFamily:'Cinzel', letterSpacing:1 }}>
+                + Round
+              </button>
+              {!structure.consolation && (
+                <button onClick={addConsolationBracket}
+                  style={{ padding:'5px 10px', borderRadius:7, border:'1px solid #8b5cf6', background:'transparent', color:'#8b5cf6', cursor:'pointer', fontSize:10, fontFamily:'Cinzel', letterSpacing:1 }}>
+                  + 3rd Place
+                </button>
+              )}
+              <button onClick={onReset} style={{ padding:'5px 10px', borderRadius:7, border:'1px solid var(--red-accent)', background:'none', color:'var(--red-accent)', cursor:'pointer', fontSize:10, fontFamily:'Cinzel' }}>Reset</button>
+            </>
           )}
         </div>
       </div>
@@ -731,6 +878,18 @@ function BracketViewer({ structure, matches, players, isCommissioner, onReset, s
             </div>
           </div>
         )}
+        {/* Consolation / 3rd place bracket */}
+        {structure.consolation && structure.consolation.length > 0 && (
+          <div style={{ marginTop:12 }}>
+            <div style={{ fontFamily:'Cinzel', color:'#8b5cf6', fontSize:9, letterSpacing:4, textTransform:'uppercase', padding:'6px 8px', background:'var(--charcoal-3)', borderRadius:'8px 8px 0 0', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+              <span>Consolation Bracket</span>
+              {isCommissioner && <button onClick={() => addRound('consolation', '')} style={{ background:'none', border:'none', color:'#8b5cf6', cursor:'pointer', fontSize:10, fontFamily:'Cinzel' }}>+ Round</button>}
+            </div>
+            <div style={{ display:'flex', gap:0, overflowX:'auto' }}>
+              {structure.consolation.map((r, ri) => renderRoundColumn(r, ri, 'consolation'))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Live slot picker */}
@@ -774,24 +933,25 @@ function BracketViewer({ structure, matches, players, isCommissioner, onReset, s
 }
 
 // ─── Round Header ─────────────────────────────────────────────────────────────
-function RoundHeader({ name, section, isCommissioner, onRename }) {
+function RoundHeader({ name, section, isCommissioner, onRename, onDelete }) {
   const [editing, setEditing] = useState(false)
   const [val, setVal] = useState(name)
   const save = () => { onRename(val); setEditing(false) }
-  const textColor = section === 'losers' ? '#ef4444' : 'var(--gold)'
-  const borderColor = section === 'losers' ? '#ef444433' : section === 'grand_final' ? 'var(--gold-dark)' : 'var(--border)'
+  const textColor = section === 'losers' ? '#ef4444' : section === 'consolation' ? '#8b5cf6' : 'var(--gold)'
+  const borderColor = section === 'losers' ? '#ef444433' : section === 'grand_final' ? 'var(--gold-dark)' : section === 'consolation' ? '#8b5cf644' : 'var(--border)'
   return (
-    <div style={{ textAlign:'center', padding:'7px 4px', background:'var(--charcoal-2)',
+    <div style={{ padding:'5px 6px', background:'var(--charcoal-2)',
       borderBottom:`1px solid ${borderColor}`, borderRight:'1px solid var(--border)', minHeight:32,
-      display:'flex', alignItems:'center', justifyContent:'center', gap:4 }}>
+      display:'flex', alignItems:'center', justifyContent:'space-between', gap:4 }}>
       {editing
         ? <input autoFocus value={val} onChange={e => setVal(e.target.value)} onBlur={save} onKeyDown={e => e.key==='Enter'&&save()}
             style={{ background:'transparent', border:'none', borderBottom:'1px solid var(--gold)', color:textColor,
-              fontFamily:'Cinzel', fontSize:9, letterSpacing:2, textAlign:'center', outline:'none', width:'90%' }} />
-        : <>
-            <span style={{ fontFamily:'Cinzel', color:textColor, fontSize:9, letterSpacing:2, textTransform:'uppercase' }}>{name}</span>
-            {isCommissioner && <button onClick={() => { setVal(name); setEditing(true) }} style={{ background:'none', border:'none', color:'var(--gold-dark)', cursor:'pointer', fontSize:10, padding:'0 2px', lineHeight:1, opacity:0.5 }}>✎</button>}
-          </>}
+              fontFamily:'Cinzel', fontSize:9, letterSpacing:2, textAlign:'center', outline:'none', flex:1 }} />
+        : <span style={{ fontFamily:'Cinzel', color:textColor, fontSize:9, letterSpacing:2, textTransform:'uppercase', flex:1, textAlign:'center' }}>{name}</span>}
+      <div style={{ display:'flex', gap:2, flexShrink:0 }}>
+        {isCommissioner && !editing && <button onClick={() => { setVal(name); setEditing(true) }} style={{ background:'none', border:'none', color:'var(--gold-dark)', cursor:'pointer', fontSize:10, padding:'0 2px', lineHeight:1, opacity:0.5 }}>✎</button>}
+        {isCommissioner && onDelete && <button onClick={onDelete} style={{ background:'none', border:'none', color:'var(--red-accent)', cursor:'pointer', fontSize:12, padding:'0 2px', lineHeight:1, opacity:0.4 }} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='0.4'}>🗑</button>}
+      </div>
     </div>
   )
 }
