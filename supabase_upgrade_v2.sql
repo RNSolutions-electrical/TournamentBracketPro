@@ -17,3 +17,7 @@ create index if not exists matches_section_idx
 -- v2.3 upgrade: add freeform_round_id for custom bracket support
 alter table matches add column if not exists freeform_round_id text default null;
 create index if not exists matches_freeform_idx on matches(bracket_section, freeform_round_id, match_index);
+
+-- v2.7 upgrade: store builder match id on DB rows for reliable winner-link resolution
+alter table matches add column if not exists freeform_match_id text default null;
+create index if not exists matches_ffmatch_idx on matches(freeform_match_id);
