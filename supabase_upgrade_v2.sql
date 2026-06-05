@@ -13,3 +13,7 @@ update matches set section_round_index = round_index where section_round_index i
 -- Add index for the new lookup pattern
 create index if not exists matches_section_idx 
   on matches(bracket_section, section_round_index, match_index);
+
+-- v2.3 upgrade: add freeform_round_id for custom bracket support
+alter table matches add column if not exists freeform_round_id text default null;
+create index if not exists matches_freeform_idx on matches(bracket_section, freeform_round_id, match_index);

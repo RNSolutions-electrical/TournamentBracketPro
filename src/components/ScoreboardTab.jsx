@@ -28,9 +28,19 @@ function resolveMatchName(match, bracket) {
   if (!bracket) return 'Match'
   const section = match.bracket_section || 'winners'
   const sri = match.section_round_index ?? match.round_index ?? 0
+  const rndId = match.freeform_round_id
 
+  // Freeform: bracket_section is a UUID (section ID), not a type string
+  if (bracket.type === 'freeform' && bracket.sections) {
+    const sec = bracket.sections.find(s => s.id === section)
+    if (!sec) return 'Match'
+    const rnd = rndId
+      ? sec.rounds?.find(r => r.id === rndId)
+      : sec.rounds?.[sri]
+    const rndName = rnd?.name || `Round ${sri + 1}`
+    return `${sec.name || 'Section'} — ${rndName}`
+  }
   if (section === 'consolation') {
-    const total = bracket.consolation?.length || 1
     return bracket.consolation?.[sri]?.name || `Consolation Round ${sri + 1}`
   }
   if (!bracket.type || bracket.type === 'single') {
@@ -180,7 +190,10 @@ export function ScoreboardTab({ matches, players, tournament, isCommissioner, ac
   }
 
   const matchLabel = resolveMatchName(selectedMatch, bracket)
-  const sectionBadge = selectedMatch.bracket_section === 'losers' ? '🔴 Losers Bracket'
+  const isFreeform = bracket?.type === 'freeform'
+  const freeformSec = isFreeform ? bracket.sections?.find(s=>s.id===selectedMatch.bracket_section) : null
+  const sectionBadge = freeformSec ? `📋 ${freeformSec.name||'Custom Section'}`
+    : selectedMatch.bracket_section === 'losers' ? '🔴 Losers Bracket'
     : selectedMatch.bracket_section === 'grand_final' ? '🏆 Grand Final'
     : selectedMatch.bracket_section === 'consolation' ? '🟣 Consolation Bracket'
     : '🟡 Winners Bracket'
