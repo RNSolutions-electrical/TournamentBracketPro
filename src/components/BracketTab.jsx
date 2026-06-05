@@ -1,8 +1,9 @@
-import { useState, useRef, useMemo, useLayoutEffect } from 'react'
+import { useState, useRef, useMemo, useLayoutEffect, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { Avatar } from './Avatar'
 import { WBLogo } from './WBLogo'
-import { generateId, shuffle } from '../lib/game'
+import { generateId, shuffle, calcRoundScore, calcMatchTotals } from '../lib/game'
+import { advanceWinner } from '../lib/scoring'
 
 const S = {
   label: { fontFamily:'Cinzel', color:'var(--gold)', fontSize:10, letterSpacing:3, textTransform:'uppercase' },
@@ -300,9 +301,177 @@ function FullBracketOverlay({ structure, matches, players, isCommissioner, onOpe
 }
 const zBtn = { width:28, height:28, borderRadius:7, border:'1px solid var(--border-bright)', background:'var(--charcoal-2)', color:'var(--gold)', fontSize:16, lineHeight:1, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }
 
+// ═══ MOBILE VIEW (vertical cards + inline commissioner scoring) ═══
+function Stepper({ value, onChange, color, max }) {
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+      <button onClick={()=>onChange(Math.max(0,value-1))} style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border-bright)', background:'var(--charcoal-3)', color:'#ef4444', fontSize:18, fontWeight:700, cursor:'pointer', lineHeight:1 }}>−</button>
+      <span style={{ color:'var(--cream)', fontFamily:'Cinzel Decorative', fontSize:20, fontWeight:700, width:22, textAlign:'center' }}>{value}</span>
+      <button onClick={()=>onChange(value+1)} disabled={max!=null&&value>=max} style={{ width:30, height:30, borderRadius:8, border:`1px solid ${color}66`, background:'var(--charcoal-3)', color, fontSize:18, fontWeight:700, cursor:max!=null&&value>=max?'not-allowed':'pointer', opacity:max!=null&&value>=max?.4:1, lineHeight:1 }}>+</button>
+    </div>
+  )
+}
+
+function MobileMatchCard({ dbm, p1, p2, slot1, slot2, label, col, isCommissioner, matches, players, structure }) {
+  const [open, setOpen] = useState(false)
+  const [b1,setB1]=useState(0),[c1,setC1]=useState(0),[b2,setB2]=useState(0),[c2,setC2]=useState(0)
+  useEffect(()=>{ setB1(0);setC1(0);setB2(0);setC2(0) },[open])
+
+  const rounds = dbm?.rounds||[]
+  const t1=dbm?.total_net1||0, t2=dbm?.total_net2||0
+  const wId=dbm?.winner_id, done=dbm?.status==='complete'
+  const ready=!done&&p1&&p2
+  const { gross1,gross2,net1,net2 } = calcRoundScore(b1,c1,b2,c2)
+
+  const confirmRound = async () => {
+    if(!p1||!p2)return
+    const newRounds=[...rounds,{p1Box:b1,p1Cup:c1,p2Box:b2,p2Cup:c2,gross1,gross2,net1,net2,confirmed:true}]
+    await supabase.from('matches').update({rounds:newRounds,total_net1:t1+net1,total_net2:t2+net2,status:'active',updated_at:new Date().toISOString()}).eq('id',dbm.id)
+    setB1(0);setC1(0);setB2(0);setC2(0)
+  }
+  const deleteRound = async idx => {
+    const upd=rounds.filter((_,i)=>i!==idx)
+    const n1=upd.filter(r=>r.confirmed).reduce((s,r)=>s+r.net1,0), n2=upd.filter(r=>r.confirmed).reduce((s,r)=>s+r.net2,0)
+    await supabase.from('matches').update({rounds:upd,total_net1:n1,total_net2:n2,updated_at:new Date().toISOString()}).eq('id',dbm.id)
+  }
+  const declareWinner = async winnerId => {
+    const loserId=winnerId===dbm.player1_id?dbm.player2_id:dbm.player1_id
+    await supabase.from('matches').update({winner_id:winnerId,status:'complete',updated_at:new Date().toISOString()}).eq('id',dbm.id)
+    await advanceWinner(winnerId,loserId,dbm,matches,structure,players)
+    setOpen(false)
+  }
+  const reopen = async () => { await supabase.from('matches').update({winner_id:null,status:'active',updated_at:new Date().toISOString()}).eq('id',dbm.id) }
+
+  const PlayerRow = ({slot,res,score,win}) => (
+    <div style={{display:'flex',alignItems:'center',gap:9,padding:'7px 0',background:win?`${col}14`:'transparent',borderRadius:6}}>
+      <Avatar player={res} size={28}/>
+      <span style={{flex:1,color:win?col:res?'var(--cream)':isWinner(slot)?'#10b981':'var(--charcoal-4)',fontSize:14,fontFamily:win||isWinner(slot)?'Cinzel':'Oswald',fontWeight:win?700:400}}>
+        {isBye(slot)?'BYE':res?(res.nickname?`"${res.nickname}"`:res.name):isWinner(slot)?`🔗 W: ${slot.matchLabel||'?'}`:'TBD'}
+      </span>
+      {win&&<span style={{color:col,fontSize:11,fontFamily:'Cinzel'}}>👑</span>}
+      <span style={{color:win?col:'var(--cream-dim)',fontWeight:700,fontSize:18,fontFamily:'Cinzel Decorative',minWidth:24,textAlign:'right'}}>{score}</span>
+    </div>
+  )
+
+  const canScore = isCommissioner && dbm && p1 && p2
+
+  return (
+    <div style={{background:'var(--charcoal-2)',borderRadius:12,border:`1.5px solid ${done?col:ready?'#10b98144':'var(--border)'}`,overflow:'hidden'}}>
+      {/* Card header (tap to expand) */}
+      <div onClick={()=>dbm&&setOpen(o=>!o)} style={{padding:'9px 13px',cursor:dbm?'pointer':'default'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:2}}>
+          <span style={{fontFamily:'Cinzel',color:col,fontSize:9,letterSpacing:1,textTransform:'uppercase'}}>{label}</span>
+          {done?<span style={{fontFamily:'Cinzel',color:col,fontSize:9,letterSpacing:1}}>FINAL</span>:ready?<span style={{fontFamily:'Cinzel',color:'#10b981',fontSize:9,letterSpacing:1}}>● READY</span>:<span style={{fontFamily:'Cinzel',color:'var(--charcoal-4)',fontSize:9,letterSpacing:1}}>PENDING</span>}
+        </div>
+        <PlayerRow slot={slot1} res={p1} score={t1} win={wId&&wId===p1?.id}/>
+        <div style={{height:1,background:'var(--border)',margin:'0 0'}}/>
+        <PlayerRow slot={slot2} res={p2} score={t2} win={wId&&wId===p2?.id}/>
+        {dbm&&<div style={{textAlign:'center',marginTop:4,color:'var(--gold-dark)',fontSize:9,fontFamily:'Cinzel',letterSpacing:1}}>{open?'▲ Tap to close':canScore?'▼ Tap to score':'▼ Tap for details'}</div>}
+      </div>
+
+      {/* Expanded scoring */}
+      {open&&dbm&&(
+        <div style={{borderTop:`1px solid var(--border)`,padding:'12px 13px',background:'var(--charcoal-3)'}}>
+          {!p1||!p2 ? (
+            <p style={{color:'var(--cream-dim)',fontSize:12,textAlign:'center',fontFamily:'IM Fell English',fontStyle:'italic',margin:0}}>Both players must be set before scoring. Waiting on a feeder match.</p>
+          ) : done ? (
+            <div style={{textAlign:'center'}}>
+              <p style={{color:col,fontFamily:'Cinzel',fontSize:12,letterSpacing:1,marginBottom:10}}>🏆 {(wId===p1?.id?p1:p2)?.name} wins</p>
+              {isCommissioner&&<button onClick={reopen} style={{padding:'7px 16px',borderRadius:8,border:'1px solid var(--gold-dark)',background:'transparent',color:'var(--gold)',fontFamily:'Cinzel',fontSize:10,letterSpacing:1,cursor:'pointer'}}>↺ Reopen Match</button>}
+            </div>
+          ) : !isCommissioner ? (
+            <p style={{color:'var(--cream-dim)',fontSize:12,textAlign:'center',fontFamily:'IM Fell English',fontStyle:'italic',margin:0}}>🔒 Commissioner can score this match.</p>
+          ) : (
+            <>
+              {/* Round entry */}
+              <p style={{fontFamily:'Cinzel',color:'var(--gold)',fontSize:9,letterSpacing:2,textTransform:'uppercase',margin:'0 0 8px',textAlign:'center'}}>Enter Round {rounds.length+1}</p>
+              {[{res:p1,b:b1,setB:setB1,c:c1,setC:setC1},{res:p2,b:b2,setB:setB2,c:c2,setC:setC2}].map((r,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                  <div style={{display:'flex',alignItems:'center',gap:6,flex:1,minWidth:0}}>
+                    <Avatar player={r.res} size={22}/>
+                    <span style={{color:'var(--cream)',fontSize:12,fontFamily:'Cinzel',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.res.nickname||r.res.name}</span>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+                    <span style={{fontFamily:'Cinzel',fontSize:7,letterSpacing:1,color:'var(--cream-dim)'}}>BOX·1</span>
+                    <Stepper value={r.b} onChange={v=>{ if(v+r.c<=4||v<r.b) r.setB(v) }} color="#3b82f6" max={4-r.c}/>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+                    <span style={{fontFamily:'Cinzel',fontSize:7,letterSpacing:1,color:'var(--gold)'}}>CUP·3</span>
+                    <Stepper value={r.c} onChange={v=>{ if(v+r.b<=4||v<r.c) r.setC(v) }} color="var(--gold)" max={4-r.b}/>
+                  </div>
+                </div>
+              ))}
+              <div style={{display:'flex',justifyContent:'space-around',padding:'6px 0',marginBottom:8,background:'var(--charcoal-2)',borderRadius:8}}>
+                <span style={{color:'var(--cream-dim)',fontSize:11,fontFamily:'Cinzel'}}>{p1.nickname||p1.name}: <span style={{color:'var(--cream)'}}>{gross1}</span> → net <span style={{color:'#10b981',fontWeight:700}}>{net1}</span></span>
+                <span style={{color:'var(--cream-dim)',fontSize:11,fontFamily:'Cinzel'}}>{p2.nickname||p2.name}: <span style={{color:'var(--cream)'}}>{gross2}</span> → net <span style={{color:'#10b981',fontWeight:700}}>{net2}</span></span>
+              </div>
+              <button onClick={confirmRound} disabled={b1+c1===0&&b2+c2===0} style={{width:'100%',padding:'10px 0',borderRadius:9,border:'1px solid var(--gold)',background:(b1+c1===0&&b2+c2===0)?'transparent':'var(--gold)',color:(b1+c1===0&&b2+c2===0)?'var(--gold-dark)':'var(--charcoal)',fontFamily:'Cinzel',fontWeight:700,fontSize:12,letterSpacing:1,cursor:'pointer',marginBottom:10}}>✓ Confirm Round</button>
+
+              {/* Round history */}
+              {rounds.length>0&&(
+                <div style={{marginBottom:10}}>
+                  <p style={{fontFamily:'Cinzel',color:'var(--cream-dim)',fontSize:8,letterSpacing:2,textTransform:'uppercase',margin:'0 0 5px'}}>Rounds Played</p>
+                  {rounds.map((r,i)=>(
+                    <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 8px',background:'var(--charcoal-2)',borderRadius:6,marginBottom:3}}>
+                      <span style={{color:'var(--gold-dark)',fontFamily:'Cinzel',fontSize:9,width:20}}>R{i+1}</span>
+                      <span style={{flex:1,color:'var(--cream-dim)',fontSize:11}}>net {r.net1} — {r.net2}</span>
+                      <button onClick={()=>deleteRound(i)} style={S.icon()} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.45'}>🗑</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Declare winner */}
+              <p style={{fontFamily:'Cinzel',color:'var(--gold)',fontSize:9,letterSpacing:2,textTransform:'uppercase',margin:'0 0 6px',textAlign:'center'}}>Declare Winner</p>
+              <div style={{display:'flex',gap:8}}>
+                <button onClick={()=>declareWinner(p1.id)} style={{flex:1,padding:'9px 0',borderRadius:9,border:`1px solid ${col}`,background:'transparent',color:col,fontFamily:'Cinzel',fontWeight:700,fontSize:11,cursor:'pointer',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>👑 {p1.nickname||p1.name}</button>
+                <button onClick={()=>declareWinner(p2.id)} style={{flex:1,padding:'9px 0',borderRadius:9,border:`1px solid ${col}`,background:'transparent',color:col,fontFamily:'Cinzel',fontWeight:700,fontSize:11,cursor:'pointer',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>👑 {p2.nickname||p2.name}</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MobileBracketView({ structure, matches, players, isCommissioner }) {
+  const getPlayer=id=>players.find(p=>p.id===id)
+  const sections=structure.sections||[]
+  const getDbm=(secId,rndId,mi)=>matches.find(m=>m.bracket_section===secId&&m.match_index===mi&&m.freeform_round_id===rndId)||matches.find(m=>m.bracket_section===secId&&m.match_index===mi)
+  const winnerOf=bid=>{for(const sec of sections)for(let ri=0;ri<sec.rounds.length;ri++){const rnd=sec.rounds[ri];for(let mi=0;mi<rnd.matches.length;mi++){if(rnd.matches[mi].id===bid){const d=getDbm(sec.id,rnd.id,mi);return d?.winner_id?getPlayer(d.winner_id):null}}}return null}
+  const resolveSlot=(slot,dbId)=>{if(dbId)return getPlayer(dbId);if(!slot)return null;if(slot.type==='player')return slot.player;if(slot.type==='winner_of')return winnerOf(slot.matchId);return null}
+
+  return (
+    <div style={{padding:'4px 12px 24px',display:'flex',flexDirection:'column',gap:18,maxWidth:480,margin:'0 auto'}}>
+      {sections.map(sec=>{const col=sCol[sec.type]||'var(--gold)';return(
+        <div key={sec.id}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+            <div style={{width:4,height:16,borderRadius:2,background:col}}/>
+            <span style={{fontFamily:'Cinzel',color:col,fontSize:11,letterSpacing:3,textTransform:'uppercase',fontWeight:700}}>{sec.name}</span>
+          </div>
+          {sec.rounds.map((rnd,ri)=>(
+            <div key={rnd.id} style={{marginBottom:12}}>
+              <p style={{fontFamily:'Cinzel',color:'var(--cream-dim)',fontSize:9,letterSpacing:2,textTransform:'uppercase',margin:'0 0 6px 4px'}}>{rnd.name||`Round ${ri+1}`}</p>
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {rnd.matches.map((m,mi)=>{
+                  if(isBye(m.p1)&&isBye(m.p2))return null
+                  const dbm=getDbm(sec.id,rnd.id,mi)
+                  const p1=resolveSlot(m.p1,dbm?.player1_id),p2=resolveSlot(m.p2,dbm?.player2_id)
+                  return <MobileMatchCard key={m.id} dbm={dbm} p1={p1} p2={p2} slot1={m.p1} slot2={m.p2} label={`Match ${mi+1}`} col={col} isCommissioner={isCommissioner} matches={matches} players={players} structure={structure}/>
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )})}
+    </div>
+  )
+}
+
 // ═══ LIVE VIEWER (visual + edit toggle) ═══
 function BracketViewer({ structure, matches, players, isCommissioner, onReset, setActiveMatch, setTab }) {
-  const [view, setView] = useState('visual')
+  const [view, setView] = useState(()=> (typeof window!=='undefined' && window.innerWidth<640) ? 'mobile' : 'visual')
   const [editor, setEditor] = useState(null)  // { matchId, field, secId, rndId, mi, current }
   const [fullScreen, setFullScreen] = useState(false)
   const isFreeform = structure.type==='freeform'
@@ -377,7 +546,8 @@ function BracketViewer({ structure, matches, players, isCommissioner, onReset, s
   return (
     <div style={{padding:'12px 10px'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
-        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+        <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+          <button onClick={()=>setView('mobile')} style={{padding:'5px 12px',borderRadius:7,border:`1px solid ${view==='mobile'?'var(--gold)':'var(--border)'}`,background:view==='mobile'?'var(--gold)':'transparent',color:view==='mobile'?'var(--charcoal)':'var(--cream-dim)',fontFamily:'Cinzel',fontSize:9,letterSpacing:1,cursor:'pointer',textTransform:'uppercase',fontWeight:700}}>📱 Mobile</button>
           <button onClick={()=>setView('visual')} style={{padding:'5px 12px',borderRadius:7,border:`1px solid ${view==='visual'?'var(--gold)':'var(--border)'}`,background:view==='visual'?'var(--gold)':'transparent',color:view==='visual'?'var(--charcoal)':'var(--cream-dim)',fontFamily:'Cinzel',fontSize:9,letterSpacing:1,cursor:'pointer',textTransform:'uppercase',fontWeight:700}}>🏆 Bracket</button>
           {isCommissioner&&<button onClick={()=>setView('edit')} style={{padding:'5px 12px',borderRadius:7,border:`1px solid ${view==='edit'?'var(--gold)':'var(--border)'}`,background:view==='edit'?'var(--gold)':'transparent',color:view==='edit'?'var(--charcoal)':'var(--cream-dim)',fontFamily:'Cinzel',fontSize:9,letterSpacing:1,cursor:'pointer',textTransform:'uppercase',fontWeight:700}}>✏️ Edit</button>}
           {isFreeform&&<button onClick={()=>setFullScreen(true)} style={{padding:'5px 12px',borderRadius:7,border:'1px solid var(--gold-dark)',background:'transparent',color:'var(--gold)',fontFamily:'Cinzel',fontSize:9,letterSpacing:1,cursor:'pointer',textTransform:'uppercase',fontWeight:700}}>🖥 Full View</button>}
@@ -389,6 +559,8 @@ function BracketViewer({ structure, matches, players, isCommissioner, onReset, s
       </div>
 
       {!isFreeform&&<div style={{padding:30,textAlign:'center',color:'var(--cream-dim)',fontFamily:'IM Fell English',fontStyle:'italic'}}>This bracket was built in an older format. Click "Clear All" to rebuild with the new visual editor.</div>}
+
+      {isFreeform&&view==='mobile'&&<MobileBracketView structure={structure} matches={matches} players={players} isCommissioner={isCommissioner}/>}
 
       {isFreeform&&view==='visual'&&<VisualBracket structure={structure} matches={matches} players={players} isCommissioner={isCommissioner} onOpenScore={openMatch} onEditSlot={(dbm,field,current,secId,rndId,mi)=>setEditor({matchId:dbm.id,field,secId,rndId,mi,current})}/>}
 
