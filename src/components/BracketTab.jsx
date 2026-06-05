@@ -250,32 +250,56 @@ function BracketViewer({ structure, matches, players, isCommissioner, onEdit, on
     setTab('Scoreboard')
   }
 
+  // Fallback: match by both new section fields and legacy round_index
   const getDbMatch = (section, sectionIndex, matchIndex) =>
-    matches.find(m => m.bracket_section === section && m.section_round_index === sectionIndex && m.match_index === matchIndex)
+    matches.find(m =>
+      m.match_index === matchIndex && (
+        (m.bracket_section === section && (m.section_round_index ?? m.round_index) === sectionIndex) ||
+        (!m.bracket_section && section === 'winners' && m.round_index === sectionIndex)
+      )
+    )
 
   // ── Edit: rename a round ──
   const renameRound = async (section, sectionIndex, name) => {
-    const tournament = await supabase.from('tournament').select('bracket').eq('id','season6').single()
-    const bracket = tournament.data?.bracket
+    const { data } = await supabase.from('tournament').select('bracket').eq('id','season6').single()
+    const bracket = data?.bracket
     if (!bracket) return
     const updated = { ...bracket }
-    if (section === 'winners') updated.rounds = bracket.rounds?.map((r,i) => i===sectionIndex ? {...r, name} : r)
-      || bracket.winners?.map((r,i) => i===sectionIndex ? {...r, name} : r)
-    if (section === 'losers') updated.losers = bracket.losers?.map((r,i) => i===sectionIndex ? {...r, name} : r)
-    if (section === 'grand_final') updated.grandFinal = { ...bracket.grandFinal, name }
+    if (section === 'winners') {
+      if (updated.rounds) updated.rounds = updated.rounds.map((r,i) => i===sectionIndex ? {...r, name} : r)
+      else if (updated.winners) updated.winners = updated.winners.map((r,i) => i===sectionIndex ? {...r, name} : r)
+    }
+    if (section === 'losers' && updated.losers) updated.losers = updated.losers.map((r,i) => i===sectionIndex ? {...r, name} : r)
+    if (section === 'grand_final' && updated.grandFinal) updated.grandFinal = { ...updated.grandFinal, name }
     await supabase.from('tournament').update({ bracket: updated, updated_at: new Date().toISOString() }).eq('id','season6')
   }
 
-  const isSingle = structure.type === 'single'
-  const rounds = isSingle ? structure.rounds : null
-  const winners = isSingle ? null : structure.winners
-  const losers = isSingle ? null : structure.losers
-  const grandFinal = isSingle ? null : structure.grandFinal
+  // Defensive: normalise whatever shape arrived
+  const isSingle = !structure.type || structure.type === 'single'
+  const rounds    = isSingle ? (structure.rounds  ?? []) : null
+  const winners   = !isSingle ? (structure.winners ?? []) : null
+  const losers    = !isSingle ? (structure.losers  ?? []) : null
+  const grandFinal = !isSingle
+    ? (structure.grandFinal ?? { matches: [], name: 'Grand Final', type: 'grand_final' })
+    : null
+
+  // Guard: empty bracket
+  if (isSingle && rounds.length === 0) return (
+    <div style={{ padding:40, textAlign:'center' }}>
+      <p style={{ color:'var(--cream-dim)', fontFamily:'IM Fell English', fontStyle:'italic', fontSize:14 }}>
+        Bracket structure is empty or unreadable. Reset and regenerate.
+      </p>
+      {isCommissioner && (
+        <button onClick={onReset} style={{ marginTop:16, padding:'8px 20px', borderRadius:8,
+          border:'1px solid var(--red-accent)', background:'none', color:'var(--red-accent)',
+          cursor:'pointer', fontFamily:'Cinzel', fontSize:12 }}>Reset Bracket</button>
+      )}
+    </div>
+  )
 
   // Champion
   const getChampion = () => {
     if (isSingle) {
-      const lastRound = rounds[rounds.length - 1]
       const finalMatch = getDbMatch('winners', rounds.length - 1, 0)
       return finalMatch?.winner_id ? getPlayer(finalMatch.winner_id) : null
     } else {
@@ -286,8 +310,10 @@ function BracketViewer({ structure, matches, players, isCommissioner, onEdit, on
   const champ = getChampion()
 
   const renderRoundColumn = (round, ri, section) => {
-    const totalInSection = section === 'winners' ? (rounds || winners).length
-      : section === 'losers' ? losers.length : 1
+    if (!round) return null
+    const safeMatches = round.matches ?? []
+    const totalInSection = section === 'winners' ? (rounds || winners || []).length
+      : section === 'losers' ? (losers || []).length : 1
     const defaultName = section === 'grand_final' ? 'Grand Final'
       : getDefaultRoundName(ri, totalInSection, section)
     const displayName = round.name || defaultName
@@ -301,8 +327,8 @@ function BracketViewer({ structure, matches, players, isCommissioner, onEdit, on
           onRename={name => renameRound(section, ri, name)} />
         <div style={{ flex:1, display:'flex', flexDirection:'column', justifyContent:'space-around',
           padding:'10px 5px', borderRight:'1px solid var(--border)' }}>
-          {round.matches.map((bm, mi) => (
-            <MatchCard key={bm.id || mi} bracketMatch={bm}
+          {safeMatches.map((bm, mi) => (
+            <MatchCard key={bm?.id || mi} bracketMatch={bm ?? {}}
               dbMatch={getDbMatch(section, ri, mi)}
               players={players} onClick={openMatch} />
           ))}

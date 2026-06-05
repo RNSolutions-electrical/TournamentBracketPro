@@ -175,3 +175,26 @@ export function buildSeededSlots(players, byeIndices, mode, manualOrder) {
   }
   return slots
 }
+
+// ─── Normalize bracket shape (v1 array → v2 object) ──────────────────────────
+// v1 stored bracket as a raw array of round-objects with { matches, name, type }
+// v2 stores { type, rounds[] } or { type, winners[], losers[], grandFinal }
+export function normalizeBracket(raw) {
+  if (!raw) return null
+  // Already v2
+  if (raw.type) return raw
+  // v1: array of rounds
+  if (Array.isArray(raw)) {
+    return {
+      type: 'single',
+      rounds: raw.map((r, i) => ({
+        matches: Array.isArray(r) ? r : (r.matches || []),
+        name: r.name || null,
+        type: 'winners',
+      })),
+      roundNames: {},
+    }
+  }
+  // Unknown shape — return null so we fall back to builder
+  return null
+}

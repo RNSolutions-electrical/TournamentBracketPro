@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from './lib/supabase'
 import { useRealtime } from './hooks/useRealtime'
+import { normalizeBracket } from './lib/game'
 import { WBLogo } from './components/WBLogo'
 import { PinModal } from './components/PinModal'
 import { PlayersTab } from './components/PlayersTab'
@@ -35,7 +36,7 @@ export default function App() {
           setConnError(true)
         } else {
           if (pData) setPlayers(pData)
-          if (tData) setTournament(tData)
+          if (tData) setTournament({ ...tData, bracket: normalizeBracket(tData.bracket) })
           if (mData) setMatches(mData)
         }
       } catch (e) {
@@ -57,7 +58,7 @@ export default function App() {
   })
 
   useRealtime('tournament', ({ new: newRow }) => {
-    if (newRow?.id === 'season6') setTournament(newRow)
+    if (newRow?.id === 'season6') setTournament({ ...newRow, bracket: normalizeBracket(newRow.bracket) })
   })
 
   useRealtime('matches', ({ eventType, new: newRow, old }) => {
